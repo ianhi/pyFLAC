@@ -319,6 +319,19 @@ class TestFileEncoder(unittest.TestCase):
         self.assertEqual(sf.info(self.temp_file.name).subtype, 'PCM_24')
         np.testing.assert_array_equal(sf.read(self.temp_file.name, dtype='int32')[0], test_samples)
 
+    def test_process_8_bit_file(self):
+        """ Test that an 8-bit WAV file is encoded as 8-bit FLAC """
+        wav_file = tempfile.NamedTemporaryFile(suffix='.wav')
+        test_samples = np.random.randint(-2**7, 2**7, (DEFAULT_BLOCKSIZE, 2)).astype('int16') << 8
+        sf.write(wav_file.name, test_samples, DEFAULT_SAMPLE_RATE, subtype='PCM_U8')
+        self.default_kwargs['input_file'] = pathlib.Path(wav_file.name)
+        self.default_kwargs['output_file'] = pathlib.Path(self.temp_file.name)
+        self.encoder = FileEncoder(**self.default_kwargs)
+        self.encoder.process()
+
+        self.assertEqual(sf.info(self.temp_file.name).subtype, 'PCM_S8')
+        np.testing.assert_array_equal(sf.read(self.temp_file.name, dtype='int16')[0], test_samples)
+
 
 if __name__ == '__main__':
     unittest.main(failfast=True)

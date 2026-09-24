@@ -31,13 +31,13 @@ class Passthrough:
         self.queue = queue.SimpleQueue()
 
         info = sf.info(str(args.input_file))
-        bits_per_sample = {'PCM_16': 16, 'PCM_24': 24, 'PCM_32': 32}.get(info.subtype)
+        bits_per_sample = {'PCM_U8': 8, 'PCM_16': 16, 'PCM_24': 24, 'PCM_32': 32}.get(info.subtype)
         if bits_per_sample is None:
-            raise ValueError(f'WAV input data type must be either PCM_16, PCM_24 or PCM_32: Got {info.subtype}')
+            raise ValueError(f'WAV input data type must be PCM_U8, PCM_16, PCM_24 or PCM_32: Got {info.subtype}')
 
-        # soundfile scales samples to fill the requested data type, so 24-bit
-        # audio read as int32 must be shifted down to its true values.
-        dtype = 'int16' if bits_per_sample == 16 else 'int32'
+        # soundfile scales samples to fill the requested data type, so 8-bit
+        # and 24-bit audio must be shifted down to their true values.
+        dtype = 'int16' if bits_per_sample <= 16 else 'int32'
         data, self.sr = sf.read(args.input_file, dtype=dtype, always_2d=True)
         self.data = data >> (np.dtype(dtype).itemsize * 8 - bits_per_sample)
 

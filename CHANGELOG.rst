@@ -11,7 +11,7 @@ pyFLAC Changelog
     error.
   * The `StreamEncoder` takes a `bits_per_sample` argument, for audio held in a
     wider data type than its bit depth, such as 24-bit audio in an `int32` array.
-  * The `FileEncoder` accepts PCM_24 WAV files.
+  * The `FileEncoder` accepts PCM_U8 and PCM_24 WAV files.
 
 * Fixed the `FileDecoder` writing 32-bit audio to a 16-bit WAV file.
 

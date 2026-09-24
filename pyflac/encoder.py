@@ -349,7 +349,7 @@ class FileEncoder(_Encoder):
     The pyFLAC file encoder reads the raw audio data from the WAV file and
     writes the encoded audio data to a FLAC file.
 
-    Note that the input WAV file must be either PCM_16, PCM_24 or PCM_32.
+    Note that the input WAV file must be PCM_U8, PCM_16, PCM_24 or PCM_32.
 
     Args:
         input_file (pathlib.Path): Path to the input WAV file
@@ -384,13 +384,13 @@ class FileEncoder(_Encoder):
         super().__init__()
 
         info = sf.info(str(input_file))
-        bits_per_sample = {'PCM_16': 16, 'PCM_24': 24, 'PCM_32': 32}.get(info.subtype)
+        bits_per_sample = {'PCM_U8': 8, 'PCM_16': 16, 'PCM_24': 24, 'PCM_32': 32}.get(info.subtype)
         if bits_per_sample is None:
-            raise ValueError(f'WAV input data type must be either PCM_16, PCM_24 or PCM_32: Got {info.subtype}')
+            raise ValueError(f'WAV input data type must be PCM_U8, PCM_16, PCM_24 or PCM_32: Got {info.subtype}')
 
-        # soundfile scales samples to fill the requested data type, so 24-bit
-        # audio read as int32 must be shifted down to its true values.
-        dtype = 'int16' if bits_per_sample == 16 else 'int32'
+        # soundfile scales samples to fill the requested data type, so 8-bit
+        # and 24-bit audio must be shifted down to their true values.
+        dtype = 'int16' if bits_per_sample <= 16 else 'int32'
         raw_audio, sample_rate = sf.read(str(input_file), dtype=dtype)
         self.__raw_audio = raw_audio >> (np.dtype(dtype).itemsize * 8 - bits_per_sample)
         self._input_bits_per_sample = bits_per_sample
