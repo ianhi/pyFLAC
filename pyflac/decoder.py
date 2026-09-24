@@ -128,6 +128,9 @@ class StreamDecoder(_Decoder):
     Args:
         write_callback (fn): Function to call when there is uncompressed
             audio data ready, see the example below for more information.
+            The audio is an `int16` array for bit depths up to 16, and an
+            `int32` array otherwise. Samples are right-aligned, so 24-bit
+            audio is in the range -2**23 to 2**23 - 1.
 
     Examples:
         An example callback which writes the audio data to file
@@ -305,12 +308,17 @@ class FileDecoder(_Decoder):
         """
         Internal callback to write the decoded data to a WAV file.
         """
+        # Write the smallest of the 16, 24 and 32-bit WAV formats that holds
+        # the bit depth. soundfile treats samples as filling their data type,
+        # so they are shifted up to match.
+        bits_per_sample = _lib.FLAC__stream_decoder_get_bits_per_sample(self._decoder)
+        wav_bits_per_sample = 16 if bits_per_sample <= 16 else 24 if bits_per_sample <= 24 else 32
         if self.__output is None:
             self.__output = sf.SoundFile(
                 self.__output_file, mode='w', channels=num_channels,
-                samplerate=sample_rate
+                samplerate=sample_rate, subtype=f'PCM_{wav_bits_per_sample}'
             )
-        self.__output.write(data)
+        self.__output.write(data << (data.dtype.itemsize * 8 - bits_per_sample))
 
 
 class OneShotDecoder(_Decoder):
@@ -327,6 +335,9 @@ class OneShotDecoder(_Decoder):
     Args:
         write_callback (fn): Function to call when there is uncompressed
             audio data ready, see the example below for more information.
+            The audio is an `int16` array for bit depths up to 16, and an
+            `int32` array otherwise. Samples are right-aligned, so 24-bit
+            audio is in the range -2**23 to 2**23 - 1.
         buffer (bytes): The FLAC encoded audio data
 
     Examples:
@@ -494,13 +505,10 @@ def _write_callback(_decoder,
     decoder = _ffi.from_handle(client_data)
 
     # --------------------------------------------------------------
-    # Data comes from libFLAC in a 32bit array, where the 16bit
-    # audio data sits in the least significant bits.
+    # Data comes from libFLAC in a 32bit array, where the audio data
+    # sits in the least significant bits.
     # --------------------------------------------------------------
     bytes_per_frame = frame.header.blocksize * np.dtype(np.int32).itemsize
-
-    if frame.header.bits_per_sample not in (16, 32):
-        raise ValueError('Only int16/int32 data type is supported')
 
     # --------------------------------------------------------------
     # The buffer contains an array of pointers to decoded channels
@@ -511,12 +519,9 @@ def _write_callback(_decoder,
     # --------------------------------------------------------------
     for ch in range(0, frame.header.channels):
         cbuffer = _ffi.buffer(buffer[ch], bytes_per_frame)
-        npbuffer = np.frombuffer(cbuffer, dtype='int32')
-        if frame.header.bits_per_sample == 16:
-            channels.append(npbuffer.astype(np.int16))
-        elif frame.header.bits_per_sample == 32:
-            channels.append(npbuffer)
-    output = np.column_stack(channels)
+        channels.append(np.frombuffer(cbuffer, dtype='int32'))
+    dtype = np.int16 if frame.header.bits_per_sample <= 16 else np.int32
+    output = np.column_stack(channels).astype(dtype, copy=False)
     decoder.write_callback(
         output,
         int(frame.header.sample_rate),

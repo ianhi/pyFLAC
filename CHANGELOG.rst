@@ -1,6 +1,16 @@
 pyFLAC Changelog
 ----------------
 
+**Unreleased**
+
+* Added support for bit depths other than 16 and 32, including 24-bit (see #17),
+  so 8-bit FLAC files no longer raise an error. Decoded audio up to 16-bit is
+  returned as `int16`, and above that as `int32`, with samples right-aligned.
+* Added a `bits_per_sample` argument to the `StreamEncoder`, for audio held in a
+  wider data type than its bit depth, such as 24-bit audio in an `int32` array.
+* The `FileEncoder` now accepts PCM_24 WAV files.
+* Fixed the `FileDecoder` writing 32-bit audio to a 16-bit WAV file.
+
 **v3.0.0**
 
 * Fixed bug in the shutdown behaviour of the `StreamDecoder` (see #22 and #23).

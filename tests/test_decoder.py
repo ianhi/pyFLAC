@@ -9,6 +9,7 @@
 #
 # ------------------------------------------------------------------------------
 
+import io
 import os
 import pathlib
 import tempfile
@@ -16,6 +17,7 @@ import time
 import unittest
 
 import numpy as np
+import soundfile as sf
 from pyflac.decoder import _Decoder
 from pyflac import (
     FileDecoder,
@@ -23,7 +25,8 @@ from pyflac import (
     OneShotDecoder,
     DecoderState,
     DecoderInitException,
-    DecoderProcessException
+    DecoderProcessException,
+    StreamEncoder,
 )
 
 
@@ -79,6 +82,21 @@ class TestStreamDecoder(unittest.TestCase):
         self.assertTrue(self.write_callback_called)
         self.assertFalse(self.decoder._thread.is_alive())
 
+    def test_process_24_bit(self):
+        """ Test that 24-bit FLAC data is decoded to right-aligned int32 samples """
+        flac = io.BytesIO()
+        test_samples = np.random.randint(-2**23, 2**23, (4096, 2), dtype='int32')
+        sf.write(flac, test_samples << 8, 44100, format='FLAC', subtype='PCM_24')
+
+        decoded = []
+        self.decoder = StreamDecoder(write_callback=lambda data, *args: decoded.append(data))
+        self.decoder.process(flac.getvalue())
+        self.decoder.finish()
+
+        output = np.concatenate(decoded)
+        self.assertEqual(output.dtype, np.int32)
+        np.testing.assert_array_equal(output, test_samples)
+
     def test_process_blocks(self):
         """ Test that FLAC data can be decoded in blocks """
         blocksize = 1024
@@ -111,12 +129,43 @@ class TestFileDecoder(unittest.TestCase):
             self.decoder = FileDecoder(**self.default_kwargs)
 
     def test_process_8bit_file(self):
-        """ Test that an 8bit file raises an error """
+        """ Test that an 8-bit FLAC file is decoded losslessly """
         test_file = pathlib.Path(__file__).parent / 'data/8bit.flac'
         self.default_kwargs['input_file'] = test_file
-        with self.assertRaises(DecoderProcessException):
-            self.decoder = FileDecoder(**self.default_kwargs)
-            self.decoder.process()
+        self.default_kwargs['output_file'] = pathlib.Path(self.temp_file.name)
+        self.decoder = FileDecoder(**self.default_kwargs)
+        data, _ = self.decoder.process()
+        np.testing.assert_array_equal(data, sf.read(test_file, always_2d=True)[0])
+
+    def test_process_24_bit_file(self):
+        """ Test that a 24-bit FLAC file is decoded to a 24-bit WAV file """
+        flac_file = tempfile.NamedTemporaryFile(suffix='.flac')
+        test_samples = np.random.randint(-2**23, 2**23, (1024, 2), dtype='int32') << 8
+        sf.write(flac_file.name, test_samples, 44100, subtype='PCM_24')
+        self.default_kwargs['input_file'] = pathlib.Path(flac_file.name)
+        self.default_kwargs['output_file'] = pathlib.Path(self.temp_file.name)
+        self.decoder = FileDecoder(**self.default_kwargs)
+        self.decoder.process()
+
+        self.assertEqual(sf.info(self.temp_file.name).subtype, 'PCM_24')
+        np.testing.assert_array_equal(sf.read(self.temp_file.name, dtype='int32')[0], test_samples)
+
+    def test_process_20_bit_file(self):
+        """ Test that a 20-bit FLAC file is decoded to a 24-bit WAV file """
+        flac_file = tempfile.NamedTemporaryFile(suffix='.flac')
+        test_samples = np.random.randint(-2**19, 2**19, (1024, 2), dtype='int32')
+        with open(flac_file.name, 'wb') as flac:
+            encoder = StreamEncoder(sample_rate=44100, write_callback=lambda buffer, *args: flac.write(buffer),
+                                    seek_callback=flac.seek, tell_callback=flac.tell, bits_per_sample=20)
+            encoder.process(test_samples)
+            encoder.finish()
+        self.default_kwargs['input_file'] = pathlib.Path(flac_file.name)
+        self.default_kwargs['output_file'] = pathlib.Path(self.temp_file.name)
+        self.decoder = FileDecoder(**self.default_kwargs)
+        self.decoder.process()
+
+        self.assertEqual(sf.info(self.temp_file.name).subtype, 'PCM_24')
+        np.testing.assert_array_equal(sf.read(self.temp_file.name, dtype='int32')[0] >> 12, test_samples)
 
     def test_process_mono_file(self):
         """ Test that a mono FLAC file can be processed """
@@ -149,6 +198,7 @@ class TestFileDecoder(unittest.TestCase):
         self.default_kwargs['output_file'] = pathlib.Path(self.temp_file.name)
         self.decoder = FileDecoder(**self.default_kwargs)
         self.assertIsNotNone(self.decoder.process())
+        self.assertEqual(sf.info(self.temp_file.name).subtype, 'PCM_32')
 
 
 class TestOneShotDecoder(unittest.TestCase):

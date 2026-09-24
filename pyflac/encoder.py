@@ -74,6 +74,7 @@ class _Encoder:
         This instance is automatically released when there are no more references to the encoder.
         """
         self._initialised = False
+        self._input_bits_per_sample = None
         self._encoder = _ffi.gc(_lib.FLAC__stream_encoder_new(), _lib.FLAC__stream_encoder_delete)
         self._encoder_handle = _ffi.new_handle(self)
         self.logger = logging.getLogger(__name__)
@@ -92,7 +93,8 @@ class _Encoder:
 
         On processing the first buffer of samples, the encoder is set up
         for the given amount of channels and data type. This is automatically
-        determined from the numpy array.
+        determined from the numpy array, unless a bit depth was specified
+        when creating the encoder.
 
         Raises:
             TypeError: if a numpy array of samples is not provided
@@ -106,7 +108,10 @@ class _Encoder:
                 self._channels = samples.shape[1]
             except IndexError:
                 self._channels = 1
-            self._bits_per_sample = samples.dtype.itemsize * 8
+            if self._input_bits_per_sample is None:
+                self._bits_per_sample = samples.dtype.itemsize * 8
+            else:
+                self._bits_per_sample = self._input_bits_per_sample
             self._init()
 
         samples = np.ascontiguousarray(samples).astype(np.int32)
@@ -264,6 +269,13 @@ class StreamEncoder(_Encoder):
             encoding process by the extra time required for decoding and comparison.
         limit_min_bitrate (bool): If `True`, the encoder will not output frames which contain
             only constant subframes, which can be beneficial for streaming applications.
+        bits_per_sample (int): The bit depth of the samples, from 4 to 32. If unspecified,
+            this is taken from the data type of the first array passed to `process`.
+            Set this when the bit depth is narrower than the data type, for example
+            `24` for 24-bit audio held in an `int32` array. Samples must be
+            right-aligned, in the range -2**(bits_per_sample - 1) to
+            2**(bits_per_sample - 1) - 1. The streamable subset only allows
+            8, 12, 16, 20, 24 and 32 bits.
 
     Examples:
         An example write callback which adds the encoded data to a queue for
@@ -300,7 +312,8 @@ class StreamEncoder(_Encoder):
                  blocksize: int = 0,
                  streamable_subset: bool = True,
                  verify: bool = False,
-                 limit_min_bitrate: bool = False):
+                 limit_min_bitrate: bool = False,
+                 bits_per_sample: int = None):
         super().__init__()
 
         self.write_callback = write_callback
@@ -314,6 +327,7 @@ class StreamEncoder(_Encoder):
         self._streamable_subset = streamable_subset
         self._verify = verify
         self._limit_min_bitrate = limit_min_bitrate
+        self._input_bits_per_sample = bits_per_sample
 
     def _init(self):
         rc = _lib.FLAC__stream_encoder_init_stream(
@@ -335,7 +349,7 @@ class FileEncoder(_Encoder):
     The pyFLAC file encoder reads the raw audio data from the WAV file and
     writes the encoded audio data to a FLAC file.
 
-    Note that the input WAV file must be either PCM_16 or PCM_32.
+    Note that the input WAV file must be either PCM_16, PCM_24 or PCM_32.
 
     Args:
         input_file (pathlib.Path): Path to the input WAV file
@@ -370,14 +384,17 @@ class FileEncoder(_Encoder):
         super().__init__()
 
         info = sf.info(str(input_file))
-        if info.subtype == 'PCM_16':
-            dtype = 'int16'
-        elif info.subtype == 'PCM_32':
-            dtype = 'int32'
-        else:
-            raise ValueError(f'WAV input data type must be either PCM_16 or PCM_32: Got {info.subtype}')
+        bits_per_sample = {'PCM_16': 16, 'PCM_24': 24, 'PCM_32': 32}.get(info.subtype)
+        if bits_per_sample is None:
+            raise ValueError(f'WAV input data type must be either PCM_16, PCM_24 or PCM_32: Got {info.subtype}')
 
-        self.__raw_audio, sample_rate = sf.read(str(input_file), dtype=dtype)
+        # soundfile scales samples to fill the requested data type, so 24-bit
+        # audio read as int32 must be shifted down to its true values.
+        dtype = 'int16' if bits_per_sample == 16 else 'int32'
+        raw_audio, sample_rate = sf.read(str(input_file), dtype=dtype)
+        self.__raw_audio = raw_audio >> (np.dtype(dtype).itemsize * 8 - bits_per_sample)
+        self._input_bits_per_sample = bits_per_sample
+
         if output_file:
             self.__output_file = output_file
         else:

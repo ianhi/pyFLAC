@@ -30,7 +30,7 @@ of the compression to the terminal. ::
 Limitations
 -----------
 
-- pyFLAC only supports 16-bit and 32-bit audio.
+- The `FileEncoder` only supports PCM_16, PCM_24 and PCM_32 WAV files.
 - FLAC metadata handling is not implemented.
 - The built in libraries do not include OGG support.
 

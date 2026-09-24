@@ -31,19 +31,21 @@ class Passthrough:
         self.queue = queue.SimpleQueue()
 
         info = sf.info(str(args.input_file))
-        if info.subtype == 'PCM_16':
-            dtype = 'int16'
-        elif info.subtype == 'PCM_32':
-            dtype = 'int32'
-        else:
-            raise ValueError(f'WAV input data type must be either PCM_16 or PCM_32: Got {info.subtype}')
+        bits_per_sample = {'PCM_16': 16, 'PCM_24': 24, 'PCM_32': 32}.get(info.subtype)
+        if bits_per_sample is None:
+            raise ValueError(f'WAV input data type must be either PCM_16, PCM_24 or PCM_32: Got {info.subtype}')
 
-        self.data, self.sr = sf.read(args.input_file, dtype=dtype, always_2d=True)
+        # soundfile scales samples to fill the requested data type, so 24-bit
+        # audio read as int32 must be shifted down to its true values.
+        dtype = 'int16' if bits_per_sample == 16 else 'int32'
+        data, self.sr = sf.read(args.input_file, dtype=dtype, always_2d=True)
+        self.data = data >> (np.dtype(dtype).itemsize * 8 - bits_per_sample)
 
         self.encoder = pyflac.StreamEncoder(
             write_callback=self.encoder_callback,
             sample_rate=self.sr,
             blocksize=args.block_size,
+            bits_per_sample=bits_per_sample,
         )
 
         self.decoder = pyflac.StreamDecoder(

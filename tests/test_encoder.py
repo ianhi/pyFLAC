@@ -9,6 +9,7 @@
 #
 # ------------------------------------------------------------------------------
 
+import io
 import pathlib
 import tempfile
 import unittest
@@ -187,6 +188,23 @@ class TestStreamEncoder(unittest.TestCase):
         self.encoder.finish()
         self.assertTrue(self.write_callback_called)
 
+    def test_process_24_bit(self):
+        """ Test that 24-bit samples in an int32 array are encoded as 24-bit FLAC """
+        flac = io.BytesIO()
+        self.default_kwargs['write_callback'] = lambda buffer, *args: flac.write(buffer)
+        self.default_kwargs['seek_callback'] = flac.seek
+        self.default_kwargs['tell_callback'] = flac.tell
+        self.default_kwargs['bits_per_sample'] = 24
+        self.encoder = StreamEncoder(**self.default_kwargs)
+        test_samples = np.random.randint(-2**23, 2**23, (DEFAULT_BLOCKSIZE, 2), dtype='int32')
+        self.encoder.process(test_samples)
+        self.encoder.finish()
+
+        flac.seek(0)
+        self.assertEqual(sf.info(flac).subtype, 'PCM_24')
+        flac.seek(0)
+        np.testing.assert_array_equal(sf.read(flac, dtype='int32')[0] >> 8, test_samples)
+
     def test_seek_tell(self):
         """ Test that seek and tell callbacks are used """
         self.default_kwargs['seek_callback'] = self._seek_callback
@@ -287,6 +305,19 @@ class TestFileEncoder(unittest.TestCase):
         self.default_kwargs['output_file'] = pathlib.Path(self.temp_file.name)
         self.encoder = FileEncoder(**self.default_kwargs)
         self.encoder.process()
+
+    def test_process_24_bit_file(self):
+        """ Test that a 24-bit WAV file is encoded as 24-bit FLAC """
+        wav_file = tempfile.NamedTemporaryFile(suffix='.wav')
+        test_samples = np.random.randint(-2**23, 2**23, (DEFAULT_BLOCKSIZE, 2), dtype='int32') << 8
+        sf.write(wav_file.name, test_samples, DEFAULT_SAMPLE_RATE, subtype='PCM_24')
+        self.default_kwargs['input_file'] = pathlib.Path(wav_file.name)
+        self.default_kwargs['output_file'] = pathlib.Path(self.temp_file.name)
+        self.encoder = FileEncoder(**self.default_kwargs)
+        self.encoder.process()
+
+        self.assertEqual(sf.info(self.temp_file.name).subtype, 'PCM_24')
+        np.testing.assert_array_equal(sf.read(self.temp_file.name, dtype='int32')[0], test_samples)
 
 
 if __name__ == '__main__':
